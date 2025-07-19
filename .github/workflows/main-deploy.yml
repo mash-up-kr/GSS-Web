@@ -1,0 +1,57 @@
+name: devoops CD
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  S3_BUCKET_NAME: devoops-deploy
+  CODE_DEPLOY_APPLICATION_NAME: devoops-code-deploy
+  CODE_DEPLOY_DEPLOYMENT_GROUP_NAME: devoops
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22.x'
+          cache: 'yarn'
+
+      - name: Generate Environment Variables File
+        run: |
+          echo "API_BASE_URL=$API_BASE_URL" >> .env.local
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build next app
+        run: yarn build
+
+      - name: Make zip file
+        run: zip -qq -r ./$GITHUB_SHA.zip . -x "node_modules/*"
+        shell: bash
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2
+
+      - name: Upload to S3
+        run: aws s3 cp --region ap-northeast-2 ./$GITHUB_SHA.zip s3://$S3_BUCKET_NAME/$GITHUB_SHA.zip
+
+      - name: Code Deploy
+        run: |
+          aws deploy create-deployment \
+          --deployment-config-name CodeDeployDefault.AllAtOnce \
+          --application-name ${{ env.CODE_DEPLOY_APPLICATION_NAME }} \
+          --deployment-group-name ${{ env.CODE_DEPLOY_DEPLOYMENT_GROUP_NAME }} \
+          --s3-location bucket=$S3_BUCKET_NAME,bundleType=zip,key=$GITHUB_SHA.zip
